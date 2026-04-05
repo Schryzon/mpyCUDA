@@ -215,3 +215,8 @@ cython_debug/
 marimo/_static/
 marimo/_lsp/
 __marimo__/
+
+# Project Specific - Kamen Rider Image Convolution
+Kamen-Rider-Image-Convolution/images/output/
+Kamen-Rider-Image-Convolution/scripts/parallel_image
+Kamen-Rider-Image-Convolution/scripts/parallel_conv
