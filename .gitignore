@@ -1,3 +1,6 @@
+# Presentation helper thing
+presentation_guide.md
+
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[codz]
