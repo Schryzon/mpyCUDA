@@ -9,6 +9,20 @@ Unifying MPI, C++, CUDA, and Jupyter for maximum parallel processing power!
 
 ---
 
+> [!CAUTION]
+> ### 🛑 HENSHIN IMPOSSIBLE: ENABLE YOUR GPU!
+> **This project REQUIRES a CUDA-capable GPU (NVIDIA T4 or better).**
+> If you run this on a standard CPU runtime, the code will fail to process images.
+> 
+> **How to fix:** 
+> 1. Go to **Runtime** → **Change runtime type**
+> 2. Select **T4 GPU** (or better)
+> 3. Click **Save**
+> 
+> *Obaachan ga itte ita... "You cannot walk the path of heaven if your engine is not even turned on."*
+
+---
+
 ## 🚀 Quick Start — Google Colab
 
 > **This is the recommended way for lecturers and reviewers.**
