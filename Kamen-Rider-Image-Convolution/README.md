@@ -1,6 +1,6 @@
 # 🛵 Kamen Rider Image Convolution
 
-> *"Koko kara ga hi-raito da!"* (Now, the highlight begins!) — Kamen Rider Geats
+> *"Saā, omae no tsumi o kazoero!"* (Now, count up your sins!) — Kamen Rider Double
 
 This project is a high-performance image processing pipeline built for the **Parallel Programming A** course. It demonstrates advanced parallel computing techniques by combining **MPI**, **CUDA**, and **OpenMP**.
 
