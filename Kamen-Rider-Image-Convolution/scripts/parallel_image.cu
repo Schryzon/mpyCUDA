@@ -15,6 +15,14 @@
 #define TAG_DIE 4
 #define TAG_READY 5
 
+#define gpuErrchk(ans) { gpuAssert((ans), __FILE__, __LINE__); }
+inline void gpuAssert(cudaError_t code, const char *file, int line, bool abort=true) {
+   if (code != cudaSuccess) {
+      fprintf(stderr,"GPUassert: %s %s %d\n", cudaGetErrorString(code), file, line);
+      if (abort) MPI_Abort(MPI_COMM_WORLD, code);
+   }
+}
+
 // Box Blur Kernel
 __global__ void blur_kernel(unsigned char *input, unsigned char *output,
                             int width, int height, int start_row, int chunk_rows, int offset, int channels, float strength) {
@@ -338,12 +346,12 @@ int main(int argc, char **argv) {
       if (needed_size > current_gpu_size) {
         if (d_input) cudaFree(d_input);
         if (d_output) cudaFree(d_output);
-        cudaMalloc(&d_input, needed_size);
-        cudaMalloc(&d_output, needed_size);
+        gpuErrchk(cudaMalloc(&d_input, needed_size));
+        gpuErrchk(cudaMalloc(&d_output, needed_size));
         current_gpu_size = needed_size;
       }
 
-      cudaMemcpy(d_input, local_data.data(), needed_size, cudaMemcpyHostToDevice);
+      gpuErrchk(cudaMemcpy(d_input, local_data.data(), needed_size, cudaMemcpyHostToDevice));
 
       dim3 threads(16, 16);
       dim3 blocks((width + 15) / 16, (chunk_rows + 15) / 16);
@@ -373,10 +381,11 @@ int main(int argc, char **argv) {
         blur_kernel<<<blocks, threads>>>(d_input, d_output, width, height, start_row, chunk_rows,
                                          offset, channels, strength);
       }
-      cudaDeviceSynchronize();
-      cudaGetLastError();
-      cudaMemcpy(local_data.data(), d_output, needed_size,
-                 cudaMemcpyDeviceToHost);
+      gpuErrchk(cudaPeekAtLastError());
+      gpuErrchk(cudaDeviceSynchronize());
+      
+      gpuErrchk(cudaMemcpy(local_data.data(), d_output, needed_size,
+                           cudaMemcpyDeviceToHost));
 
       // Send back only the processed part
       MPI_Send(range, 2, MPI_INT, 0, TAG_RESULT, COMM);

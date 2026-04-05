@@ -5,7 +5,7 @@
 
 NVCC       := nvcc
 STD        := c++17
-OPT_FLAGS  := --use_fast_math -lineinfo -std=$(STD) -O2
+OPT_FLAGS  := --use_fast_math -lineinfo -std=$(STD) -O2 -arch=sm_75
 
 # Warning Suppression
 WARN_FLAGS := -w -Xcompiler -w
