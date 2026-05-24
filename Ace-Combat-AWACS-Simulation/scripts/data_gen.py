@@ -36,20 +36,20 @@ def generate_radar_data(num_records=1000000, output_file='radar_data.csv'):
     
     # Threat score calculation (0 to 100)
     score = np.zeros(num_records)
-    score += np.clip(30 - (distances_xy / 6666.0), 0, 30)
+    score += np.clip(35 - (distances_xy / 6000.0), 0, 35)
     score += np.clip((velocity - 170) / (850 - 170) * 30, 0, 30)
     score += np.clip(30 - (heading_diff / 3.0), 0, 30)
-    # Altitude Factor: +10 points for flying low (under radar horizon)
-    score += np.clip((20000 - altitude) / 19500.0 * 10, 0, 10)
+    # Altitude Factor: +5 points for flying low (under radar horizon)
+    score += np.clip((20000 - altitude) / 19500.0 * 5, 0, 5)
     
     # Labels: 0 = Low, 1 = Medium, 2 = High, 3 = Critical
     threat_label = np.zeros(num_records, dtype=int)
-    threat_label[score > 40] = 1
-    threat_label[score > 60] = 2
-    threat_label[score > 80] = 3
+    threat_label[score > 35] = 1
+    threat_label[score > 55] = 2
+    threat_label[score > 70] = 3
     
-    # Inject 5% random noise to simulate faulty IFF/sensors (Realistic ML Task)
-    noise_mask = np.random.rand(num_records) < 0.05
+    # Inject 1% random noise to simulate faulty IFF/sensors (Realistic ML Task)
+    noise_mask = np.random.rand(num_records) < 0.01
     threat_label[noise_mask] = np.random.randint(0, 4, np.sum(noise_mask))
     
     df = pd.DataFrame({

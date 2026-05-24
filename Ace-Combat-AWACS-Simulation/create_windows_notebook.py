@@ -64,6 +64,7 @@ import sys
 # Ensure Spark can find Python (Adjust path if needed or let Spark use system default)
 os.environ['PYSPARK_PYTHON'] = sys.executable
 os.environ['PYSPARK_DRIVER_PYTHON'] = sys.executable
+os.environ['JAVA_HOME'] = "C:/Users/nyoma/scoop/apps/java17/current"
 
 from pyspark.sql import SparkSession
 from pyspark.ml.feature import VectorAssembler

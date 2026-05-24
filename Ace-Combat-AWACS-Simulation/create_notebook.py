@@ -66,12 +66,14 @@ if not os.path.exists(WORK_DIR):
 """)
 
 # Cell 4
-add_code("""# Install PySpark
-!apt-get install openjdk-8-jdk-headless -qq > /dev/null
+add_code("""!apt-get update -qq
+import os
+
+os.environ["JAVA_HOME"] = "/usr/lib/jvm/java-17-openjdk-amd64"
+
 !pip install pyspark plotly -q
 
-import os
-os.environ["JAVA_HOME"] = "/usr/lib/jvm/java-8-openjdk-amd64"
+!java -version
 """)
 
 # Cell 5
@@ -87,9 +89,13 @@ from pyspark.ml.feature import VectorAssembler
 from pyspark.ml.classification import RandomForestClassifier
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
 
+# Start cleanly without calling SparkContext.getOrCreate() first
 spark = SparkSession.builder \\
     .appName("AWACS_Threat_Scoring") \\
-    .config("spark.driver.memory", "4g") \\
+    .config("spark.driver.memory", "10g") \\
+    .config("spark.driver.host", "127.0.0.1") \\
+    .config("spark.driver.bindAddress", "127.0.0.1") \\
+    .config("spark.local.dir", "/tmp/spark-temp") \\
     .getOrCreate()
 
 print("Spark Session created successfully.")
