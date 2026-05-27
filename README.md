@@ -38,11 +38,13 @@ This repository contains **two parallel programming projects** for the Parallel 
     -   Uses MPI + CUDA + OpenMP hybrid parallelism.
     -   Implements **Guided Scheduling** for dynamic load balancing.
 2.  **Ace Combat AWACS Simulation** (ACTIVE)
-    -   Large-scale target prioritization using Apache Spark MLlib (Random Forest).
-    -   Advanced Feature Engineering (PySpark Trigonometry) & ML Noise Injection.
-    -   Parallel interception trajectory math using CUDA C++.
-    -   Atomic GPU operations for massive concurrent thread tracking.
-    -   Interactive 3D visualization (Radar Dome & Interception Paths) via Plotly.
+    -   Distributed IFF (Identification Friend or Foe) threat sorting using Apache Spark MLlib (Random Forest).
+    -   Advanced Feature Engineering (vectorized closest-base tracking and angle-difference trigonometry) over 1 million radar sweeps.
+    -   Parallel tri-base interception trajectory math solved concurrently inside custom CUDA GPGPU kernels.
+    -   Dynamic scramble matchmaking (Allied F-15 Eagle dashes for MiG-29s, F-14 Tomcat scrambles for Su-27s, SAM batteries for unknown threats).
+    -   Atomic GPU operations for thread-safe concurrent target evasion logging.
+    -   High-fidelity interactive 3D tactical map animating 20 dogfights, complete with solid square bases, cyan/red delta-wing markers, expanding orange hit explosions, orbiting CAP squads, and smooth glass-like `Mesh3d` radar domes (zero grid spirals).
+    -   Graceful nearest-base localized evasion callouts.
 
 ### Project Structure
 ```text

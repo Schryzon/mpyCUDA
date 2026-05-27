@@ -14,7 +14,11 @@ extern "C" {
         int num_targets,
         const float* x, const float* y, const float* z,
         const float* velocity, const float* heading,
+        const int* aircraft_type_id,
+        int num_bases,
+        const float* base_x, const float* base_y, const float* base_z,
         float* tti, float* int_x, float* int_y, float* int_z,
+        int* launch_base_idx,
         int* evasions
     );
 }
@@ -24,7 +28,11 @@ __global__ void interception_kernel(
     int num_targets,
     const float* x, const float* y, const float* z,
     const float* velocity, const float* heading,
+    const int* aircraft_type_id,
+    int num_bases,
+    const float* base_x, const float* base_y, const float* base_z,
     float* tti, float* int_x, float* int_y, float* int_z,
+    int* launch_base_idx,
     int* evasions) 
 {
     int i = blockIdx.x * blockDim.x + threadIdx.x;
@@ -42,38 +50,71 @@ __global__ void interception_kernel(
         float vy = v * cosf(h_rad);
         float vz = 0.0f; // Target maintains altitude for simplicity
         
-        float Sm = 1000.0f; // SAM Speed (1000 m/s)
+        // Interceptor speed depends on the target aircraft type (to simulate dynamic matching)
+        // 0: MiG-29 -> F-15 interceptor (700 m/s)
+        // 1: Su-27 -> F-14 interceptor (600 m/s)
+        // Other -> SAM Missile (1000 m/s)
+        float Sm = 1000.0f;
+        int target_type = aircraft_type_id[i];
+        if (target_type == 0) {
+            Sm = 700.0f; // Allied F-15 Eagle intercept speed (Mach 2+)
+        } else if (target_type == 1) {
+            Sm = 600.0f; // Allied F-14 Tomcat intercept speed (Mach 1.8+)
+        }
         
-        // Quadratic coefficients: a t^2 + b t + c = 0
-        float a = (vx*vx + vy*vy + vz*vz) - (Sm*Sm);
-        float b = 2.0f * (px*vx + py*vy + pz*vz);
-        float c = (px*px + py*py + pz*pz);
+        float best_tti = -1.0f;
+        int best_base_idx = -1;
+        float best_int_x = 0.0f;
+        float best_int_y = 0.0f;
+        float best_int_z = 0.0f;
         
-        float discriminant = b*b - 4.0f*a*c;
-        
-        if (discriminant >= 0.0f) {
-            float t1 = (-b + sqrtf(discriminant)) / (2.0f*a);
-            float t2 = (-b - sqrtf(discriminant)) / (2.0f*a);
+        // Loop through all bases and solve quadratic intercept for each
+        for (int b = 0; b < num_bases; ++b) {
+            float bx = base_x[b];
+            float by = base_y[b];
+            float bz = base_z[b];
             
-            float t = -1.0f;
-            if (t1 > 0 && t2 > 0) t = fminf(t1, t2);
-            else if (t1 > 0) t = t1;
-            else if (t2 > 0) t = t2;
+            float dx = px - bx;
+            float dy = py - by;
+            float dz = pz - bz;
             
-            if (t > 0.0f) {
-                tti[i] = t;
-                int_x[i] = px + vx * t;
-                int_y[i] = py + vy * t;
-                int_z[i] = pz + vz * t;
-            } else {
-                tti[i] = -1.0f; // Cannot intercept
-                int_x[i] = 0.0f;
-                int_y[i] = 0.0f;
-                int_z[i] = 0.0f;
-                atomicAdd(evasions, 1);
+            // Quadratic coefficients: a t^2 + b t + c = 0
+            float a = (vx*vx + vy*vy + vz*vz) - (Sm*Sm);
+            float b_coeff = 2.0f * (dx*vx + dy*vy + dz*vz);
+            float c = (dx*dx + dy*dy + dz*dz);
+            
+            float discriminant = b_coeff*b_coeff - 4.0f*a*c;
+            
+            if (discriminant >= 0.0f) {
+                float t1 = (-b_coeff + sqrtf(discriminant)) / (2.0f*a);
+                float t2 = (-b_coeff - sqrtf(discriminant)) / (2.0f*a);
+                
+                float t = -1.0f;
+                if (t1 > 0 && t2 > 0) t = fminf(t1, t2);
+                else if (t1 > 0) t = t1;
+                else if (t2 > 0) t = t2;
+                
+                if (t > 0.0f) {
+                    if (best_tti < 0.0f || t < best_tti) {
+                        best_tti = t;
+                        best_base_idx = b;
+                        best_int_x = px + vx * t;
+                        best_int_y = py + vy * t;
+                        best_int_z = pz + vz * t;
+                    }
+                }
             }
+        }
+        
+        if (best_tti > 0.0f) {
+            tti[i] = best_tti;
+            launch_base_idx[i] = best_base_idx;
+            int_x[i] = best_int_x;
+            int_y[i] = best_int_y;
+            int_z[i] = best_int_z;
         } else {
-            tti[i] = -1.0f;
+            tti[i] = -1.0f; // Cannot intercept
+            launch_base_idx[i] = -1;
             int_x[i] = 0.0f;
             int_y[i] = 0.0f;
             int_z[i] = 0.0f;
@@ -87,56 +128,87 @@ void calculate_interception(
     int num_targets,
     const float* x, const float* y, const float* z,
     const float* velocity, const float* heading,
+    const int* aircraft_type_id,
+    int num_bases,
+    const float* base_x, const float* base_y, const float* base_z,
     float* tti, float* int_x, float* int_y, float* int_z,
+    int* launch_base_idx,
     int* evasions) 
 {
     float *d_x, *d_y, *d_z, *d_velocity, *d_heading;
+    int *d_aircraft_type_id;
+    float *d_base_x, *d_base_y, *d_base_z;
     float *d_tti, *d_int_x, *d_int_y, *d_int_z;
-    int *d_evasions;
+    int *d_launch_base_idx, *d_evasions;
     
-    size_t size = num_targets * sizeof(float);
+    size_t size_float_targets = num_targets * sizeof(float);
+    size_t size_int_targets = num_targets * sizeof(int);
+    size_t size_float_bases = num_bases * sizeof(float);
     
-    cudaMalloc((void**)&d_x, size);
-    cudaMalloc((void**)&d_y, size);
-    cudaMalloc((void**)&d_z, size);
-    cudaMalloc((void**)&d_velocity, size);
-    cudaMalloc((void**)&d_heading, size);
-    cudaMalloc((void**)&d_tti, size);
-    cudaMalloc((void**)&d_int_x, size);
-    cudaMalloc((void**)&d_int_y, size);
-    cudaMalloc((void**)&d_int_z, size);
+    // Allocate device memory
+    cudaMalloc((void**)&d_x, size_float_targets);
+    cudaMalloc((void**)&d_y, size_float_targets);
+    cudaMalloc((void**)&d_z, size_float_targets);
+    cudaMalloc((void**)&d_velocity, size_float_targets);
+    cudaMalloc((void**)&d_heading, size_float_targets);
+    cudaMalloc((void**)&d_aircraft_type_id, size_int_targets);
+    
+    cudaMalloc((void**)&d_base_x, size_float_bases);
+    cudaMalloc((void**)&d_base_y, size_float_bases);
+    cudaMalloc((void**)&d_base_z, size_float_bases);
+    
+    cudaMalloc((void**)&d_tti, size_float_targets);
+    cudaMalloc((void**)&d_int_x, size_float_targets);
+    cudaMalloc((void**)&d_int_y, size_float_targets);
+    cudaMalloc((void**)&d_int_z, size_float_targets);
+    cudaMalloc((void**)&d_launch_base_idx, size_int_targets);
     cudaMalloc((void**)&d_evasions, sizeof(int));
     
-    cudaMemcpy(d_x, x, size, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_y, y, size, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_z, z, size, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_velocity, velocity, size, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_heading, heading, size, cudaMemcpyHostToDevice);
+    // Copy data to device
+    cudaMemcpy(d_x, x, size_float_targets, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_y, y, size_float_targets, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_z, z, size_float_targets, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_velocity, velocity, size_float_targets, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_heading, heading, size_float_targets, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_aircraft_type_id, aircraft_type_id, size_int_targets, cudaMemcpyHostToDevice);
+    
+    cudaMemcpy(d_base_x, base_x, size_float_bases, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_base_y, base_y, size_float_bases, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_base_z, base_z, size_float_bases, cudaMemcpyHostToDevice);
     cudaMemcpy(d_evasions, evasions, sizeof(int), cudaMemcpyHostToDevice);
     
     int threadsPerBlock = 256;
     int blocksPerGrid = (num_targets + threadsPerBlock - 1) / threadsPerBlock;
     
     interception_kernel<<<blocksPerGrid, threadsPerBlock>>>(
-        num_targets, d_x, d_y, d_z, d_velocity, d_heading,
-        d_tti, d_int_x, d_int_y, d_int_z, d_evasions
+        num_targets, d_x, d_y, d_z, d_velocity, d_heading, d_aircraft_type_id,
+        num_bases, d_base_x, d_base_y, d_base_z,
+        d_tti, d_int_x, d_int_y, d_int_z, d_launch_base_idx, d_evasions
     );
     cudaDeviceSynchronize();
     
-    cudaMemcpy(tti, d_tti, size, cudaMemcpyDeviceToHost);
-    cudaMemcpy(int_x, d_int_x, size, cudaMemcpyDeviceToHost);
-    cudaMemcpy(int_y, d_int_y, size, cudaMemcpyDeviceToHost);
-    cudaMemcpy(int_z, d_int_z, size, cudaMemcpyDeviceToHost);
+    // Copy results back to host
+    cudaMemcpy(tti, d_tti, size_float_targets, cudaMemcpyDeviceToHost);
+    cudaMemcpy(int_x, d_int_x, size_float_targets, cudaMemcpyDeviceToHost);
+    cudaMemcpy(int_y, d_int_y, size_float_targets, cudaMemcpyDeviceToHost);
+    cudaMemcpy(int_z, d_int_z, size_float_targets, cudaMemcpyDeviceToHost);
+    cudaMemcpy(launch_base_idx, d_launch_base_idx, size_int_targets, cudaMemcpyDeviceToHost);
     cudaMemcpy(evasions, d_evasions, sizeof(int), cudaMemcpyDeviceToHost);
     
+    // Free device memory
     cudaFree(d_x);
     cudaFree(d_y);
     cudaFree(d_z);
     cudaFree(d_velocity);
     cudaFree(d_heading);
+    cudaFree(d_aircraft_type_id);
+    cudaFree(d_base_x);
+    cudaFree(d_base_y);
+    cudaFree(d_base_z);
     cudaFree(d_tti);
     cudaFree(d_int_x);
     cudaFree(d_int_y);
     cudaFree(d_int_z);
+    cudaFree(d_launch_base_idx);
     cudaFree(d_evasions);
 }
