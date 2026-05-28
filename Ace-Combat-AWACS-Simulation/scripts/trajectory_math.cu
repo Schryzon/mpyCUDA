@@ -53,6 +53,11 @@ __global__ void interception_kernel(
         // Interceptor speed depends on the target aircraft type (to simulate dynamic matching)
         // 0: MiG-29 -> F-15 interceptor (700 m/s)
         // 1: Su-27 -> F-14 interceptor (600 m/s)
+        // 9: Su-47 Grabacr -> F-22A Mobius (850 m/s)
+        // 10: Su-37 Gelb/Yellow -> F-15C Galm (750 m/s)
+        // 11: Su-33 Strigon -> F-15E Garuda (720 m/s)
+        // 12: Su-30SM Sol -> F-14D Wardog (680 m/s)
+        // 13: Su-35 Ofnir -> F-16C Crow (650 m/s)
         // Other -> SAM Missile (1000 m/s)
         float Sm = 1000.0f;
         int target_type = aircraft_type_id[i];
@@ -60,6 +65,16 @@ __global__ void interception_kernel(
             Sm = 700.0f; // Allied F-15 Eagle intercept speed (Mach 2+)
         } else if (target_type == 1) {
             Sm = 600.0f; // Allied F-14 Tomcat intercept speed (Mach 1.8+)
+        } else if (target_type == 9) {
+            Sm = 850.0f; // Allied F-22A Raptor intercept speed (Mach 2.5+)
+        } else if (target_type == 10) {
+            Sm = 750.0f; // Allied F-15C Eagle intercept speed (Mach 2.2+)
+        } else if (target_type == 11) {
+            Sm = 720.0f; // Allied F-15E Strike Eagle intercept speed (Mach 2.1)
+        } else if (target_type == 12) {
+            Sm = 680.0f; // Allied F-14D Super Tomcat intercept speed (Mach 2.0)
+        } else if (target_type == 13) {
+            Sm = 650.0f; // Allied F-16C Fighting Falcon intercept speed (Mach 1.9)
         }
         
         float best_tti = -1.0f;

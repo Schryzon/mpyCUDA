@@ -220,3 +220,7 @@ __marimo__/
 Kamen-Rider-Image-Convolution/images/output/
 Kamen-Rider-Image-Convolution/scripts/parallel_image
 Kamen-Rider-Image-Convolution/scripts/parallel_conv
+
+# Project Specific - Ace Combat AWACS Simulation
+Ace-Combat-AWACS-Simulation/radar_data.csv
+

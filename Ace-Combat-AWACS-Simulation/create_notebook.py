@@ -91,12 +91,12 @@ from pyspark.ml.classification import RandomForestClassifier
 from pyspark.ml.evaluation import MulticlassClassificationEvaluator
 
 # Start cleanly with memory-optimized driver bounds
-spark = SparkSession.builder \\
-    .appName("AWACS_Threat_Scoring") \\
-    .config("spark.driver.memory", "10g") \\
-    .config("spark.driver.host", "127.0.0.1") \\
-    .config("spark.driver.bindAddress", "127.0.0.1") \\
-    .config("spark.local.dir", "/tmp/spark-temp") \\
+spark = SparkSession.builder \
+    .appName("AWACS_Threat_Scoring") \
+    .config("spark.driver.memory", "10g") \
+    .config("spark.driver.host", "127.0.0.1") \
+    .config("spark.driver.bindAddress", "127.0.0.1") \
+    .config("spark.local.dir", "/tmp/spark-temp") \
     .getOrCreate()
 
 print("Spark Session created successfully.")
@@ -167,12 +167,21 @@ print(f"Model Accuracy (boosted by IFF + Closest Base tracking): {accuracy * 100
 
 # Cell 9
 add_code("""# Filter critical threats (Prediction == 3 and Hostile IFF == 0)
-# We make sure the SAM network and scramble fighter squads ONLY engage actual enemies!
+# We prioritize verified elite enemy squadrons (Grabacr, Strigon, Sol, Yellow, Gelb, Ofnir)
+# over standard unnamed threats to ensure our AWACS scrambles target high-value bandits first,
+# then we order by distance to our bases!
+from pyspark.sql.functions import desc
+
 critical_df = predictions.filter((col("prediction") == 3.0) & (col("iff_status") == 0))
-top_threats = critical_df.orderBy("distance").limit(1000).toPandas()
+
+# We order by whether the bogey belongs to an elite squadron first (descending), then by proximity!
+top_threats = critical_df.orderBy(
+    when(col("squadron_name") != "None", 1).otherwise(0).desc(),
+    "distance"
+).limit(1000).toPandas()
 
 print(f"Found {len(top_threats)} critical targets.")
-top_threats[['bogey_id', 'aircraft_type', 'distance', 'velocity', 'threat_label']].head()
+top_threats[['bogey_id', 'aircraft_type', 'squadron_name', 'callsign', 'distance', 'velocity', 'threat_label']].head()
 """)
 
 # Cell 10
@@ -254,7 +263,7 @@ top_threats['launch_base_idx'] = launch_base_idx
 
 print("CUDA computation complete!")
 print(f"CRITICAL ALERT: {evasions.value} hostiles successfully evaded our airspace defense network!")
-top_threats[['bogey_id', 'aircraft_type', 'distance', 'tti', 'launch_base_idx']].head()
+top_threats[['bogey_id', 'aircraft_type', 'squadron_name', 'callsign', 'distance', 'tti', 'launch_base_idx']].head()
 """)
 
 # Cell 12
@@ -266,7 +275,7 @@ import math
 def get_clock_position(x, y, bx, by):
     dx, dy = x - bx, y - by
     angle_rad = math.atan2(dx, dy) 
-    angle_deg = (math.degrees(angle_rad) + 360) % 360
+    angle_deg = (90.0 - math.degrees(angle_rad) + 360.0) % 360.0
     clock = int(round(angle_deg / 30.0))
     if clock == 0: clock = 12
     return clock
@@ -277,6 +286,16 @@ def get_elevation(z):
     else: return "level"
 
 base_names = {0: "Alpha (HQ)", 1: "Bravo (FOB)", 2: "Charlie (Naval)"}
+
+matchup_dict = {
+    0: "F-15 EAGLE",
+    1: "F-14 TOMCAT",
+    9: "F-22A MOBIUS (Raptor)",
+    10: "F-15C GALM (Eagle)",
+    11: "F-15E GARUDA (Strike Eagle)",
+    12: "F-14D WARDOG (Tomcat)",
+    13: "F-16C CROW (Falcon)"
+}
 
 print("\\n===== AWACS RADAR CALLOUTS =====")
 for i, row in top_threats.head(5).iterrows():
@@ -297,17 +316,20 @@ for i, row in top_threats.head(5).iterrows():
     clock = get_clock_position(row['x'], row['y'], bx, by)
     elevation = get_elevation(row['altitude'])
     
+    callsign_str = f"{row['callsign']} ({row['aircraft_type']})" if row['squadron_name'] != 'None' else row['aircraft_type']
+    
     if row['tti'] > 0:
-        matchup = "F-15 EAGLE" if row['aircraft_type_id'] == 0 else "F-14 TOMCAT"
-        print(f"AWACS: \\"Bandit {row['aircraft_type']}, hot at {clock} o'clock, {elevation}! Base {b_name} scrambling {matchup} interceptor. TTI {row['tti']:.1f}s!\\"")
+        matchup = matchup_dict.get(row['aircraft_type_id'], "SAM MISSILE")
+        print(f"AWACS: \\"Bandit {callsign_str}, hot at {clock} o'clock, {elevation}! Base {b_name} scrambling {matchup} interceptor. TTI {row['tti']:.1f}s!\\"")
     else:
-        print(f"AWACS: \\"WARNING! High-speed Bandit {row['aircraft_type']}, {clock} o'clock, {elevation} relative to Base {b_name} has breached intercept envelope!\\"")
+        print(f"AWACS: \\"WARNING! High-speed Bandit {callsign_str}, {clock} o'clock, {elevation} relative to Base {b_name} has breached intercept envelope!\\"")
 print("================================\\n")
 """)
 
 # Cell 13
 add_code("""# Interactive 3D Animated Tactical Map with Plotly
 import plotly.graph_objects as go
+import pandas as pd
 import numpy as np
 import math
 
@@ -338,18 +360,24 @@ fig.add_trace(go.Mesh3d(x=x_d + 50000, y=y_d - 50000, z=z_d, opacity=0.03, color
 # 3. Static background threat plots
 fig.add_trace(go.Scatter3d(
     x=top_threats['x'], y=top_threats['y'], z=top_threats['altitude'],
-    mode='markers', marker=dict(size=2, color='rgba(255, 0, 0, 0.2)'),
+    mode='markers', marker=dict(size=2, color='rgba(255, 0, 0, 0.15)'),
     name='Threat Radar Blips'
 ))
 
-# 4. Grab top 20 engagements to animate in high-fidelity (increased from 15 for extra intense action!)
-engagements = top_threats[top_threats['tti'] > 0].head(20).copy()
+# 4. Grab top engagements to animate. Let's make sure we select our elite squadrons!
+elite_engagements = top_threats[(top_threats['tti'] > 0) & (top_threats['squadron_name'] != 'None')].head(20)
+if len(elite_engagements) < 15:
+    standard_engagements = top_threats[(top_threats['tti'] > 0) & (top_threats['squadron_name'] == 'None')].head(20 - len(elite_engagements))
+    engagements = pd.concat([elite_engagements, standard_engagements]).copy()
+else:
+    engagements = elite_engagements.copy()
 
 # Initial Hostile Positions (t = 0) (Red diamonds represent enemy 3D triangle wings!)
 fig.add_trace(go.Scatter3d(
     x=engagements['x'], y=engagements['y'], z=engagements['altitude'],
     mode='markers+text', marker=dict(size=8, color='red', symbol='diamond'),
-    text=engagements['aircraft_type'], textposition='top center',
+    text=engagements.apply(lambda r: f"{r['callsign']} ({r['aircraft_type']})" if r['squadron_name'] != 'None' else r['aircraft_type'], axis=1), 
+    textposition='top center',
     name='Hostiles (MiG/Su)'
 ))
 
@@ -360,7 +388,17 @@ for _, row in engagements.iterrows():
     bx_coords.append(base_x_arr[b_idx])
     by_coords.append(base_y_arr[b_idx])
     bz_coords.append(base_z_arr[b_idx])
-    interceptor_names.append('F-15' if row['aircraft_type_id'] == 0 else 'F-14')
+    
+    # Dynamic allied fighter types matching
+    t_type = int(row['aircraft_type_id'])
+    if t_type == 9: interceptor_names.append('Mobius Squadron (F-22A)')
+    elif t_type == 10: interceptor_names.append('Galm Team (F-15C)')
+    elif t_type == 11: interceptor_names.append('Garuda Team (F-15E)')
+    elif t_type == 12: interceptor_names.append('Wardog Squadron (F-14D)')
+    elif t_type == 13: interceptor_names.append('Crow Team (F-16C)')
+    elif t_type == 0: interceptor_names.append('Allied F-15 Eagle')
+    elif t_type == 1: interceptor_names.append('Allied F-14 Tomcat')
+    else: interceptor_names.append('SAM Battery')
 
 fig.add_trace(go.Scatter3d(
     x=bx_coords, y=by_coords, z=bz_coords,
@@ -376,17 +414,68 @@ fig.add_trace(go.Scatter3d(
     name='Dogfight Hits'
 ))
 
-# Allied Combat Air Patrols (CAP) patrolling the airspace (Cyan diamonds for allied jets!)
+# Allied Combat Air Patrols (CAP) patrolling the airspace in Finger-Four/V formations!
 patrol_x, patrol_y, patrol_z = [], [], []
+cap_formations = {
+    0: [ # Mobius (F-22A) - V-Formation
+        (0.0, 0.0, 0.0),
+        (-1200.0, -1200.0, 100.0),
+        (1200.0, -1200.0, -100.0),
+        (-2400.0, -2400.0, 200.0)
+    ],
+    1: [ # Wardog (F-14D) - Finger-Four
+        (0.0, 0.0, 0.0),
+        (-1200.0, -1200.0, 50.0),
+        (2400.0, -600.0, -50.0),
+        (1200.0, -1800.0, 100.0)
+    ],
+    2: [ # Razgriz (F-14D) - Finger-Four
+        (0.0, 0.0, 0.0),
+        (-1200.0, -1200.0, -50.0),
+        (2400.0, -600.0, 50.0),
+        (1200.0, -1800.0, -100.0)
+    ]
+}
+
+# Initial CAP positions (t = 0)
 for b_idx in range(num_bases):
-    patrol_x.append(base_x_arr[b_idx] + 20000.0)
-    patrol_y.append(base_y_arr[b_idx])
-    patrol_z.append(10000.0)
+    bx, by = base_x_arr[b_idx], base_y_arr[b_idx]
+    lead_x = bx + 20000.0
+    lead_y = by
+    lead_z = 10000.0
+    
+    # Heading is tangent to the circle path (90 degrees, i.e., East/North)
+    for dx, dy, dz in cap_formations[b_idx]:
+        patrol_x.append(lead_x + dx)
+        patrol_y.append(lead_y + dy)
+        patrol_z.append(lead_z + dz)
 
 fig.add_trace(go.Scatter3d(
     x=patrol_x, y=patrol_y, z=patrol_z,
-    mode='markers', marker=dict(size=8, color='cyan', symbol='diamond'),
-    name='CAP Flight Patrols'
+    mode='markers', marker=dict(size=7, color='rgba(0, 255, 200, 0.7)', symbol='diamond'),
+    name='CAP Patrol Squads'
+))
+
+# 5. Continuous Line Trails & Missile Launch Shoots
+# Trace 11: Allied Trails (green)
+fig.add_trace(go.Scatter3d(
+    x=[None], y=[None], z=[None],
+    mode='lines', line=dict(color='rgba(0, 255, 100, 0.6)', width=2),
+    name='Allied Scramble Trails'
+))
+
+# Trace 12: Enemy Trails (orange)
+fig.add_trace(go.Scatter3d(
+    x=[None], y=[None], z=[None],
+    mode='lines', line=dict(color='rgba(255, 120, 0, 0.6)', width=2),
+    name='Enemy Flight Trails'
+))
+
+# Trace 13: Missile Shoot Lines (cyan dashed)
+fig.add_trace(go.Scatter3d(
+    x=[None], y=[None], z=[None],
+    mode='lines', line=dict(color='rgba(0, 255, 255, 0.8)', width=1.5, dash='dash'),
+    name='Missile Launch Vectors'
 ))
 
 # Trace Index mappings:
@@ -396,7 +485,10 @@ fig.add_trace(go.Scatter3d(
 # 7: Animated Hostiles
 # 8: Animated Allied Scrambles
 # 9: Animated Hits
-# 10: CAP Flight Patrols
+# 10: CAP Patrol Squads
+# 11: Allied Trails
+# 12: Enemy Trails
+# 13: Missile Shoot Lines
 
 # Calculate Animation Frames
 num_frames = 60
@@ -410,6 +502,11 @@ for k, t in enumerate(times):
     i_x, i_y, i_z, i_txt = [], [], [], []
     exp_x, exp_y, exp_z, exp_sz = [], [], [], []
     
+    # Trails and missile coordinates lists
+    allied_trail_x, allied_trail_y, allied_trail_z = [], [], []
+    enemy_trail_x, enemy_trail_y, enemy_trail_z = [], [], []
+    missile_x, missile_y, missile_z = [], [], []
+    
     for _, row in engagements.iterrows():
         px, py, pz = row['x'], row['y'], row['altitude']
         h_rad = row['heading'] * math.pi / 180.0
@@ -419,36 +516,95 @@ for k, t in enumerate(times):
         b_idx = int(row['launch_base_idx'])
         bx, by, bz = base_x_arr[b_idx], base_y_arr[b_idx], base_z_arr[b_idx]
         
-        # Target position
-        if t < tti_val:
-            b_x.append(px + vx * t)
-            b_y.append(py + vy * t)
-            b_z.append(pz)
-            b_txt.append(row['aircraft_type'])
+        # Interceptor classification
+        t_type = int(row['aircraft_type_id'])
+        int_type = 'SAM Missile'
+        if t_type == 9: int_type = 'Mobius Squadron (F-22A)'
+        elif t_type == 10: int_type = 'Galm Team (F-15C)'
+        elif t_type == 11: int_type = 'Garuda Team (F-15E)'
+        elif t_type == 12: int_type = 'Wardog Squadron (F-14D)'
+        elif t_type == 13: int_type = 'Crow Team (F-16C)'
+        elif t_type == 0: int_type = 'Allied F-15 Eagle'
+        elif t_type == 1: int_type = 'Allied F-14 Tomcat'
+        
+        # Positions
+        hx_t = px + vx * min(t, tti_val)
+        hy_t = py + vy * min(t, tti_val)
+        hz_t = pz
+        
+        ratio = min(t, tti_val) / tti_val
+        ax_t = bx + (row['int_x'] - bx) * ratio
+        ay_t = by + (row['int_y'] - by) * ratio
+        az_t = bz + (row['int_z'] - bz) * ratio
+        
+        # Enemy flight path trail
+        enemy_trail_x.extend([px, hx_t, None])
+        enemy_trail_y.extend([py, hy_t, None])
+        enemy_trail_z.extend([pz, hz_t, None])
+        
+        # Allied scramble path trail
+        allied_trail_x.extend([bx, ax_t, None])
+        allied_trail_y.extend([by, ay_t, None])
+        allied_trail_z.extend([bz, az_t, None])
+        
+        # Missile shoot trajectory (Launched at 70% of TTI)
+        t_launch = tti_val * 0.7
+        if t >= t_launch:
+            # Fighter launch position
+            ax_launch = bx + (row['int_x'] - bx) * 0.7
+            ay_launch = by + (row['int_y'] - by) * 0.7
+            az_launch = bz + (row['int_z'] - bz) * 0.7
             
-            # Allied Interceptor position flying towards interception point
-            ratio = t / tti_val
-            i_x.append(bx + (row['int_x'] - bx) * ratio)
-            i_y.append(by + (row['int_y'] - by) * ratio)
-            i_z.append(bz + (row['int_z'] - bz) * ratio)
-            i_txt.append('F-15 Eagle' if row['aircraft_type_id'] == 0 else 'F-14 Tomcat')
+            m_ratio = min((t - t_launch) / (tti_val - t_launch), 1.0)
+            mx_t = ax_launch + (row['int_x'] - ax_launch) * m_ratio
+            my_t = ay_launch + (row['int_y'] - ay_launch) * m_ratio
+            mz_t = az_launch + (row['int_z'] - az_launch) * m_ratio
+            
+            # Connect launch site to missile head
+            missile_x.extend([ax_launch, mx_t, None])
+            missile_y.extend([ay_launch, my_t, None])
+            missile_z.extend([az_launch, mz_t, None])
+            
+        if t < tti_val:
+            b_x.append(hx_t)
+            b_y.append(hy_t)
+            b_z.append(hz_t)
+            b_txt.append(f"{row['callsign']} ({row['aircraft_type']})" if row['squadron_name'] != 'None' else row['aircraft_type'])
+            
+            i_x.append(ax_t)
+            i_y.append(ay_t)
+            i_z.append(az_t)
+            i_txt.append(int_type)
         else:
-            # Show dynamic expanding explosion for 2.5 seconds post-interception
             if t < tti_val + 2.5:
                 exp_x.append(row['int_x'])
                 exp_y.append(row['int_y'])
                 exp_z.append(row['int_z'])
                 exp_sz.append(int(10 + (t - tti_val) * 12))
                 
-    # Allied CAP Flight positions patrolling around their respective bases
+    # Allied CAP Flight positions orbiting in tight formations around their bases
     pat_x, pat_y, pat_z = [], [], []
     for b_idx in range(num_bases):
         bx, by = base_x_arr[b_idx], base_y_arr[b_idx]
-        omega = 0.06 # angular speed
+        omega = 0.06 # orbit angular speed
         rad = 20000.0
-        pat_x.append(bx + rad * math.cos(omega * t + b_idx * math.pi/3.0))
-        pat_y.append(by + rad * math.sin(omega * t + b_idx * math.pi/3.0))
-        pat_z.append(10000.0 + math.sin(omega * t) * 1200.0)
+        
+        # Center of the formation
+        lead_x = bx + rad * math.cos(omega * t + b_idx * math.pi/3.0)
+        lead_y = by + rad * math.sin(omega * t + b_idx * math.pi/3.0)
+        lead_z = 10000.0 + math.sin(omega * t) * 1200.0
+        
+        # Compute heading tangent to circle
+        h_rad = omega * t + b_idx * math.pi/3.0 + math.pi/2.0
+        c = math.cos(h_rad)
+        s = math.sin(h_rad)
+        
+        for dx, dy, dz in cap_formations[b_idx]:
+            rx = dx * c + dy * s
+            ry = -dx * s + dy * c
+            pat_x.append(lead_x + rx)
+            pat_y.append(lead_y + ry)
+            pat_z.append(lead_z + dz)
         
     frames.append(go.Frame(
         data=[
@@ -460,15 +616,18 @@ for k, t in enumerate(times):
                 z=exp_z if len(exp_z) > 0 else [None],
                 marker=dict(size=exp_sz if len(exp_sz) > 0 else 1, color='orange', symbol='circle')
             ),
-            go.Scatter3d(x=pat_x, y=pat_y, z=pat_z, marker=dict(size=8, color='cyan', symbol='diamond'))
+            go.Scatter3d(x=pat_x, y=pat_y, z=pat_z, marker=dict(size=7, color='rgba(0, 255, 200, 0.7)', symbol='diamond')),
+            go.Scatter3d(x=allied_trail_x, y=allied_trail_y, z=allied_trail_z),
+            go.Scatter3d(x=enemy_trail_x, y=enemy_trail_y, z=enemy_trail_z),
+            go.Scatter3d(x=missile_x, y=missile_y, z=missile_z)
         ],
         name=f'frame_{k}',
-        traces=[7, 8, 9, 10]
+        traces=[7, 8, 9, 10, 11, 12, 13]
     ))
-    
+
 fig.frames = frames
 
-# 5. UI layout controls: Play, Pause, and Timeline Slider
+# 6. UI layout controls: Play, Pause, and Timeline Slider
 fig.update_layout(
     title='AWACS Tactical Battle Space: Simulated Ace Combat Scrambles',
     scene=dict(
@@ -503,6 +662,8 @@ fig.update_layout(
     )]
 )
 
+import plotly.io as pio
+pio.renderers.default = "colab"
 fig.show()
 """)
 
