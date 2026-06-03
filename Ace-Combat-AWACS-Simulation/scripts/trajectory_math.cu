@@ -75,6 +75,10 @@ __global__ void interception_kernel(
             Sm = 680.0f; // Allied F-14D Super Tomcat intercept speed (Mach 2.0)
         } else if (target_type == 13) {
             Sm = 650.0f; // Allied F-16C Fighting Falcon intercept speed (Mach 1.9)
+        } else if (target_type == 14 || target_type == 16) {
+            Sm = 300000.0f; // TLS Laser speed of light (instant intercept)
+        } else if (target_type == 15 || target_type == 17 || target_type == 18 || target_type == 19) {
+            Sm = 3400.0f; // EML Railgun hyper-velocity (Mach 10)
         }
         
         float best_tti = -1.0f;

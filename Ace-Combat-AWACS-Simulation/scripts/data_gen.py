@@ -154,6 +154,63 @@ def generate_radar_data(num_records=1000000, output_file='radar_data.csv'):
             'base_target': 1, # Bravo
             'altitude_range': (8000, 11000),
             'speed_range': (600, 680)
+        },
+        {
+            'name': 'Raven',
+            'type_id': 16, # ADF-11F
+            'size': 4,
+            'formation': 'finger_four',
+            'base_target': 0, # Alpha
+            'altitude_range': (10000, 12000),
+            'speed_range': (800, 900)
+        },
+        {
+            'name': 'Crimson',
+            'type_id': 17, # PW-Mk.I
+            'size': 2,
+            'formation': 'echelon_right',
+            'base_target': 1, # Bravo
+            'altitude_range': (9000, 11000),
+            'speed_range': (750, 850)
+        },
+        {
+            'name': 'Gleipnir',
+            'type_id': 19, # Enemy airship
+            'size': 1,
+            'formation': 'trail',
+            'base_target': 2, # Charlie
+            'altitude_range': (9000, 10000),
+            'speed_range': (120, 140)
+        }
+    ]
+    
+    elite_allied_squadrons = [
+        {
+            'name': 'Faust',
+            'type_id': 18, # Allied airship
+            'size': 1,
+            'formation': 'trail',
+            'base_target': 2, # Charlie
+            'altitude_range': (8000, 9000),
+            'speed_range': (120, 130)
+        },
+        {
+            'name': 'Falken',
+            'type_id': 14, # ADF-01
+            'size': 2,
+            'formation': 'echelon_right',
+            'base_target': 0, # Alpha
+            'altitude_range': (8000, 10000),
+            'speed_range': (700, 800)
+        },
+        {
+            'name': 'Wyvern',
+            'type_id': 15, # X-02S
+            'size': 2,
+            'formation': 'echelon_left',
+            'base_target': 1, # Bravo
+            'altitude_range': (8000, 10000),
+            'speed_range': (750, 850)
         }
     ]
     
@@ -161,11 +218,12 @@ def generate_radar_data(num_records=1000000, output_file='radar_data.csv'):
     # to populate the critical defense airspace.
     num_flights = 5
     for flight_num in range(num_flights):
+        # Generate bogeys
         for sq in elite_bogey_squadrons:
             sq_size = sq['size']
             
             # Check if there is enough space left in the array
-            if current_idx + sq_size > num_records * 0.1: # Limit elite units to 10% of workspace max
+            if current_idx + sq_size > num_records * 0.12: # Limit elite units to 12% of workspace max
                 break
                 
             # Random starting position for squadron leader, vectoring in on their targeted base
@@ -209,6 +267,43 @@ def generate_radar_data(num_records=1000000, output_file='radar_data.csv'):
                     
             current_idx += sq_size
 
+        # Generate elite allies
+        for sq in elite_allied_squadrons:
+            sq_size = sq['size']
+            
+            if current_idx + sq_size > num_records * 0.15:
+                break
+                
+            target_bx, target_by = bases[sq['base_target']]
+            dist_to_base = np.random.uniform(5000.0, 30000.0)
+            angle_from_base = np.random.uniform(0.0, 2.0 * np.pi)
+            
+            leader_x = target_bx + dist_to_base * np.cos(angle_from_base)
+            leader_y = target_by + dist_to_base * np.sin(angle_from_base)
+            leader_heading = np.random.uniform(0.0, 360.0)
+            
+            leader_alt = np.random.uniform(*sq['altitude_range'])
+            leader_speed = np.random.uniform(*sq['speed_range'])
+            
+            offsets = generate_formation_offsets(sq['formation'], sq_size)
+            rotated = rotate_offsets(offsets, leader_heading)
+            
+            for i in range(sq_size):
+                idx = current_idx + i
+                rx, ry, rz = rotated[i]
+                
+                x[idx] = leader_x + rx
+                y[idx] = leader_y + ry
+                altitude[idx] = np.clip(leader_alt + rz, 100.0, 22000.0)
+                velocity[idx] = leader_speed + np.random.normal(0.0, 2.0)
+                heading[idx] = (leader_heading + np.random.normal(0.0, 0.5)) % 360.0
+                iff_status[idx] = 1 # Allied Friendly
+                aircraft_type_id[idx] = sq['type_id']
+                squadron_name[idx] = sq['name']
+                callsign[idx] = f"{sq['name']} {i + 1}"
+                
+            current_idx += sq_size
+
     print(f"Generated {current_idx} elite bogey squadron records successfully.")
     
     # 3. Fill the remaining records with randomly scattered background flights
@@ -229,12 +324,18 @@ def generate_radar_data(num_records=1000000, output_file='radar_data.csv'):
     allies_mask = (remaining_iff == 1)
     enemies_mask = (remaining_iff == 0)
     
-    # Standard plane type IDs:
-    # Allies: F-15 (2), F-14 (3)
-    # Enemies: MiG-29 (0), Su-27 (1)
+    # Standard and Advanced plane type IDs:
+    # Allies: F-15 (2), F-14 (3), ADF-01 (14), X-02S (15), P-1112 Airship (18)
+    # Enemies: MiG-29 (0), Su-27 (1), ADF-11F (16), PW-Mk.I (17), GLEIPNIR Airship (19)
+    allies_types = [2, 3, 14, 15, 18]
+    allies_p = [0.44, 0.44, 0.05, 0.05, 0.02]
+    
+    enemies_types = [0, 1, 16, 17, 19]
+    enemies_p = [0.44, 0.44, 0.05, 0.05, 0.02]
+    
     rem_type_ids = np.zeros(remaining, dtype=int)
-    rem_type_ids[allies_mask] = np.random.choice([2, 3], size=np.sum(allies_mask))
-    rem_type_ids[enemies_mask] = np.random.choice([0, 1], size=np.sum(enemies_mask))
+    rem_type_ids[allies_mask] = np.random.choice(allies_types, size=np.sum(allies_mask), p=allies_p)
+    rem_type_ids[enemies_mask] = np.random.choice(enemies_types, size=np.sum(enemies_mask), p=enemies_p)
     aircraft_type_id[current_idx:] = rem_type_ids
     
     # Velocities based on capabilities
@@ -243,6 +344,12 @@ def generate_radar_data(num_records=1000000, output_file='radar_data.csv'):
     rem_velocities[rem_type_ids == 1] = np.random.uniform(350.0, 650.0, np.sum(rem_type_ids == 1)) # Su-27
     rem_velocities[rem_type_ids == 2] = np.random.uniform(400.0, 700.0, np.sum(rem_type_ids == 2)) # F-15
     rem_velocities[rem_type_ids == 3] = np.random.uniform(300.0, 600.0, np.sum(rem_type_ids == 3)) # F-14
+    rem_velocities[rem_type_ids == 14] = np.random.uniform(700.0, 850.0, np.sum(rem_type_ids == 14)) # ADF-01 Falken
+    rem_velocities[rem_type_ids == 15] = np.random.uniform(750.0, 900.0, np.sum(rem_type_ids == 15)) # X-02S Strike Wyvern
+    rem_velocities[rem_type_ids == 16] = np.random.uniform(800.0, 950.0, np.sum(rem_type_ids == 16)) # ADF-11F Raven
+    rem_velocities[rem_type_ids == 17] = np.random.uniform(750.0, 900.0, np.sum(rem_type_ids == 17)) # PW-Mk.I
+    rem_velocities[rem_type_ids == 18] = np.random.uniform(120.0, 150.0, np.sum(rem_type_ids == 18)) # P-1112 Aigaion
+    rem_velocities[rem_type_ids == 19] = np.random.uniform(120.0, 140.0, np.sum(rem_type_ids == 19)) # GLEIPNIR
     velocity[current_idx:] = rem_velocities
     
     # Proximity calculation to assign heading vectors for standard hostiles
@@ -306,7 +413,9 @@ def generate_radar_data(num_records=1000000, output_file='radar_data.csv'):
     type_mapping = {
         0: 'MiG-29', 1: 'Su-27', 2: 'F-15', 3: 'F-14',
         4: 'F-22A', 5: 'F-14D', 6: 'F-15C', 7: 'F-15E', 8: 'F-16C',
-        9: 'Su-47', 10: 'Su-37', 11: 'Su-33', 12: 'Su-30SM', 13: 'Su-35'
+        9: 'Su-47', 10: 'Su-37', 11: 'Su-33', 12: 'Su-30SM', 13: 'Su-35',
+        14: 'ADF-01', 15: 'X-02S', 16: 'ADF-11F', 17: 'PW-Mk.I',
+        18: 'P-1112', 19: 'GLEIPNIR'
     }
     aircraft_type = np.array([type_mapping[tid] for tid in aircraft_type_id])
     
