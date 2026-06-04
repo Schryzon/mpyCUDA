@@ -21,6 +21,17 @@ extern "C" {
         int* launch_base_idx,
         int* evasions
     );
+
+    EXPORT void process_radar_data(
+        int num_records,
+        const float* x, const float* y, const float* altitude,
+        const float* velocity, const float* heading, const int* iff_status,
+        float threshold,
+        float* out_k,
+        int* out_filtered_count,
+        float* out_sum_k,
+        float* out_max_k
+    );
 }
 
 // CUDA Kernel
@@ -230,4 +241,181 @@ void calculate_interception(
     cudaFree(d_int_z);
     cudaFree(d_launch_base_idx);
     cudaFree(d_evasions);
+}
+
+// Helper function for atomic max of float values
+__device__ float atomicMaxFloat(float* address, float val) {
+    int* address_as_int = (int*)address;
+    int old = *address_as_int, assumed;
+    do {
+        assumed = old;
+        old = atomicCAS(address_as_int, assumed,
+                        __float_as_int(fmaxf(val, __int_as_float(assumed))));
+    } while (assumed != old);
+    return __int_as_float(old);
+}
+
+// CUDA Kernel for radar data processing using Shared Memory block-level reduction
+__global__ void process_radar_data_kernel(
+    int num_records,
+    const float* x, const float* y, const float* altitude,
+    const float* velocity, const float* heading, const int* iff_status,
+    float threshold,
+    float* out_k,
+    int* d_filtered_count,
+    float* d_sum_k,
+    float* d_max_k)
+{
+    // Caching block results in shared memory to demonstrate advanced block reduction
+    __shared__ int s_counts[256];
+    __shared__ float s_sums[256];
+    __shared__ float s_maxs[256];
+    
+    int tx = threadIdx.x;
+    int i = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    // Initialize shared memory elements
+    s_counts[tx] = 0;
+    s_sums[tx] = 0.0f;
+    s_maxs[tx] = 0.0f;
+    
+    float k = 0.0f;
+    int passed = 0;
+    
+    if (i < num_records) {
+        float px = x[i];
+        float py = y[i];
+        float pz = altitude[i];
+        float v = velocity[i];
+        float h = heading[i];
+        int iff = iff_status[i];
+        
+        // Convert heading (degrees) to radians. 
+        // 0 degrees is North (+y), 90 is East (+x)
+        float h_rad = h * M_PI / 180.0f;
+        float vx = v * sinf(h_rad);
+        float vy = v * cosf(h_rad);
+        
+        // Calculate distance to origin (Base Alpha)
+        float dist = sqrtf(px*px + py*py + pz*pz);
+        
+        // Calculate closing velocity using projected vector dot product
+        float dot = px*vx + py*vy;
+        float v_close = -dot / (dist + 1.0f);
+        if (v_close < 0.0f) v_close = 0.0f;
+        
+        // Symmetrical Faction Logic: only process hostile targets flying towards base
+        if (iff == 0) {
+            k = (v_close * v_close) / (2.0f * (dist + 1.0f));
+        }
+        
+        out_k[i] = k;
+        
+        if (iff == 0 && k > threshold) {
+            passed = 1;
+        }
+    }
+    
+    // Load into shared memory
+    s_counts[tx] = passed;
+    s_sums[tx] = passed ? k : 0.0f;
+    s_maxs[tx] = passed ? k : 0.0f;
+    
+    __syncthreads();
+    
+    // Parallel reduction in shared memory (tree reduction)
+    for (unsigned int stride = blockDim.x / 2; stride > 0; stride >>= 1) {
+        if (tx < stride) {
+            s_counts[tx] += s_counts[tx + stride];
+            s_sums[tx] += s_sums[tx + stride];
+            s_maxs[tx] = fmaxf(s_maxs[tx], s_maxs[tx + stride]);
+        }
+        __syncthreads();
+    }
+    
+    // Thread 0 of each block accumulates block-level results atomically into global counters
+    if (tx == 0) {
+        if (s_counts[0] > 0) {
+            atomicAdd(d_filtered_count, s_counts[0]);
+            atomicAdd(d_sum_k, s_sums[0]);
+            atomicMaxFloat(d_max_k, s_maxs[0]);
+        }
+    }
+}
+
+// Host wrapper function
+void process_radar_data(
+    int num_records,
+    const float* x, const float* y, const float* altitude,
+    const float* velocity, const float* heading, const int* iff_status,
+    float threshold,
+    float* out_k,
+    int* out_filtered_count,
+    float* out_sum_k,
+    float* out_max_k)
+{
+    float *d_x, *d_y, *d_altitude, *d_velocity, *d_heading;
+    int *d_iff_status;
+    float *d_out_k;
+    int *d_filtered_count;
+    float *d_sum_k, *d_max_k;
+    
+    size_t size_float = num_records * sizeof(float);
+    size_t size_int = num_records * sizeof(int);
+    
+    // Allocate device memory
+    cudaMalloc((void**)&d_x, size_float);
+    cudaMalloc((void**)&d_y, size_float);
+    cudaMalloc((void**)&d_altitude, size_float);
+    cudaMalloc((void**)&d_velocity, size_float);
+    cudaMalloc((void**)&d_heading, size_float);
+    cudaMalloc((void**)&d_iff_status, size_int);
+    cudaMalloc((void**)&d_out_k, size_float);
+    
+    cudaMalloc((void**)&d_filtered_count, sizeof(int));
+    cudaMalloc((void**)&d_sum_k, sizeof(float));
+    cudaMalloc((void**)&d_max_k, sizeof(float));
+    
+    // Copy data to device
+    cudaMemcpy(d_x, x, size_float, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_y, y, size_float, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_altitude, altitude, size_float, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_velocity, velocity, size_float, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_heading, heading, size_float, cudaMemcpyHostToDevice);
+    cudaMemcpy(d_iff_status, iff_status, size_int, cudaMemcpyHostToDevice);
+    
+    // Initialize reduction variables
+    int zero_int = 0;
+    float zero_float = 0.0f;
+    cudaMemcpy(d_filtered_count, &zero_int, sizeof(int), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_sum_k, &zero_float, sizeof(float), cudaMemcpyHostToDevice);
+    cudaMemcpy(d_max_k, &zero_float, sizeof(float), cudaMemcpyHostToDevice);
+    
+    int threadsPerBlock = 256;
+    int blocksPerGrid = (num_records + threadsPerBlock - 1) / threadsPerBlock;
+    
+    // Launch kernel
+    process_radar_data_kernel<<<blocksPerGrid, threadsPerBlock>>>(
+        num_records, d_x, d_y, d_altitude, d_velocity, d_heading, d_iff_status,
+        threshold, d_out_k, d_filtered_count, d_sum_k, d_max_k
+    );
+    cudaDeviceSynchronize();
+    
+    // Copy results back to host
+    cudaMemcpy(out_k, d_out_k, size_float, cudaMemcpyDeviceToHost);
+    cudaMemcpy(out_filtered_count, d_filtered_count, sizeof(int), cudaMemcpyDeviceToHost);
+    cudaMemcpy(out_sum_k, d_sum_k, sizeof(float), cudaMemcpyDeviceToHost);
+    cudaMemcpy(out_max_k, d_max_k, sizeof(float), cudaMemcpyDeviceToHost);
+    
+    // Free device memory
+    cudaFree(d_x);
+    cudaFree(d_y);
+    cudaFree(d_altitude);
+    cudaFree(d_velocity);
+    cudaFree(d_heading);
+    cudaFree(d_iff_status);
+    cudaFree(d_out_k);
+    cudaFree(d_filtered_count);
+    cudaFree(d_sum_k);
+    cudaFree(d_max_k);
 }
