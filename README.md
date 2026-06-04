@@ -3,7 +3,7 @@ Unifying MPI, C++, CUDA, Apache Spark, and Python for maximum parallel processin
 
 | 1st Project: Image Convolution Engine | 2nd Project: AWACS Simulation |
 | :---: | :---: |
-| [![Open First Project](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Schryzon/mpyCUDA/blob/master/Kamen-Rider-Image-Convolution/colab_notebook.ipynb) | [![Open Second Project](https://colab.research.google.com/assets/colab-badge.svg)](https://colab.research.google.com/github/Schryzon/mpyCUDA/blob/master/Ace-Combat-AWACS-Simulation/colab_notebook.ipynb) |
+| <a href="https://colab.research.google.com/github/Schryzon/mpyCUDA/blob/master/Kamen-Rider-Image-Convolution/colab_notebook.ipynb" target="_blank"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open First Project"></a> | <a href="https://colab.research.google.com/github/Schryzon/mpyCUDA/blob/master/Ace-Combat-AWACS-Simulation/colab_notebook.ipynb" target="_blank"><img src="https://colab.research.google.com/assets/colab-badge.svg" alt="Open Second Project"></a> |
 
 ---
 
