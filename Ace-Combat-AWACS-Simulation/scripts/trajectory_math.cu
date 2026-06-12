@@ -34,6 +34,11 @@ extern "C" {
     );
 }
 
+// Global Constant Memory for base coordinates to optimize broadcast reads
+__constant__ float const_base_x[16];
+__constant__ float const_base_y[16];
+__constant__ float const_base_z[16];
+
 // CUDA Kernel
 __global__ void interception_kernel(
     int num_targets,
@@ -41,7 +46,6 @@ __global__ void interception_kernel(
     const float* velocity, const float* heading,
     const int* aircraft_type_id,
     int num_bases,
-    const float* base_x, const float* base_y, const float* base_z,
     float* tti, float* int_x, float* int_y, float* int_z,
     int* launch_base_idx,
     int* evasions) 
@@ -88,8 +92,8 @@ __global__ void interception_kernel(
             Sm = 650.0f; // Allied F-16C Fighting Falcon intercept speed (Mach 1.9)
         } else if (target_type == 14 || target_type == 16) {
             Sm = 300000.0f; // TLS Laser speed of light (instant intercept)
-        } else if (target_type == 15 || target_type == 17 || target_type == 18 || target_type == 19) {
-            Sm = 3400.0f; // EML Railgun hyper-velocity (Mach 10)
+        } else if (target_type == 15 || target_type == 17 || (target_type >= 18 && target_type <= 26)) {
+            Sm = 3400.0f; // EML Railgun hyper-velocity (Mach 10) for airships and railgun units
         }
         
         float best_tti = -1.0f;
@@ -98,11 +102,11 @@ __global__ void interception_kernel(
         float best_int_y = 0.0f;
         float best_int_z = 0.0f;
         
-        // Loop through all bases and solve quadratic intercept for each
+        // Loop through all bases and solve quadratic intercept for each using constant memory coordinates
         for (int b = 0; b < num_bases; ++b) {
-            float bx = base_x[b];
-            float by = base_y[b];
-            float bz = base_z[b];
+            float bx = const_base_x[b];
+            float by = const_base_y[b];
+            float bz = const_base_z[b];
             
             float dx = px - bx;
             float dy = py - by;
@@ -167,13 +171,17 @@ void calculate_interception(
 {
     float *d_x, *d_y, *d_z, *d_velocity, *d_heading;
     int *d_aircraft_type_id;
-    float *d_base_x, *d_base_y, *d_base_z;
     float *d_tti, *d_int_x, *d_int_y, *d_int_z;
     int *d_launch_base_idx, *d_evasions;
     
     size_t size_float_targets = num_targets * sizeof(float);
     size_t size_int_targets = num_targets * sizeof(int);
-    size_t size_float_bases = num_bases * sizeof(float);
+    
+    // Copy base locations to constant memory (supports up to 16 bases)
+    int copy_bases = num_bases > 16 ? 16 : num_bases;
+    cudaMemcpyToSymbol(const_base_x, base_x, copy_bases * sizeof(float));
+    cudaMemcpyToSymbol(const_base_y, base_y, copy_bases * sizeof(float));
+    cudaMemcpyToSymbol(const_base_z, base_z, copy_bases * sizeof(float));
     
     // Allocate device memory
     cudaMalloc((void**)&d_x, size_float_targets);
@@ -182,10 +190,6 @@ void calculate_interception(
     cudaMalloc((void**)&d_velocity, size_float_targets);
     cudaMalloc((void**)&d_heading, size_float_targets);
     cudaMalloc((void**)&d_aircraft_type_id, size_int_targets);
-    
-    cudaMalloc((void**)&d_base_x, size_float_bases);
-    cudaMalloc((void**)&d_base_y, size_float_bases);
-    cudaMalloc((void**)&d_base_z, size_float_bases);
     
     cudaMalloc((void**)&d_tti, size_float_targets);
     cudaMalloc((void**)&d_int_x, size_float_targets);
@@ -201,10 +205,6 @@ void calculate_interception(
     cudaMemcpy(d_velocity, velocity, size_float_targets, cudaMemcpyHostToDevice);
     cudaMemcpy(d_heading, heading, size_float_targets, cudaMemcpyHostToDevice);
     cudaMemcpy(d_aircraft_type_id, aircraft_type_id, size_int_targets, cudaMemcpyHostToDevice);
-    
-    cudaMemcpy(d_base_x, base_x, size_float_bases, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_base_y, base_y, size_float_bases, cudaMemcpyHostToDevice);
-    cudaMemcpy(d_base_z, base_z, size_float_bases, cudaMemcpyHostToDevice);
     cudaMemcpy(d_evasions, evasions, sizeof(int), cudaMemcpyHostToDevice);
     
     int threadsPerBlock = 256;
@@ -212,8 +212,7 @@ void calculate_interception(
     
     interception_kernel<<<blocksPerGrid, threadsPerBlock>>>(
         num_targets, d_x, d_y, d_z, d_velocity, d_heading, d_aircraft_type_id,
-        num_bases, d_base_x, d_base_y, d_base_z,
-        d_tti, d_int_x, d_int_y, d_int_z, d_launch_base_idx, d_evasions
+        num_bases, d_tti, d_int_x, d_int_y, d_int_z, d_launch_base_idx, d_evasions
     );
     cudaDeviceSynchronize();
     
@@ -232,9 +231,6 @@ void calculate_interception(
     cudaFree(d_velocity);
     cudaFree(d_heading);
     cudaFree(d_aircraft_type_id);
-    cudaFree(d_base_x);
-    cudaFree(d_base_y);
-    cudaFree(d_base_z);
     cudaFree(d_tti);
     cudaFree(d_int_x);
     cudaFree(d_int_y);

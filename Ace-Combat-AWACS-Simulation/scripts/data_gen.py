@@ -78,12 +78,34 @@ def rotate_offsets(offsets, heading_deg):
 def generate_radar_data(num_records=1000000, output_file='radar_data.csv'):
     print(f"Generating {num_records} tactical radar records with Ace Combat elite squadrons...")
     
-    # 1. Define active military bases
+    # 1. Define active military bases (randomized but spread out across regional boundaries)
+    base_alpha_x = np.random.uniform(-10000.0, 10000.0)
+    base_alpha_y = np.random.uniform(-10000.0, 10000.0)
+    
+    base_bravo_x = np.random.uniform(-75000.0, -45000.0)
+    base_bravo_y = np.random.uniform(30000.0, 50000.0)
+    
+    base_charlie_x = np.random.uniform(40000.0, 60000.0)
+    base_charlie_y = np.random.uniform(-60000.0, -40000.0)
+    
     bases = [
-        (0.0, 0.0),            # Base Alpha (HQ)
-        (-60000.0, 40000.0),   # Base Bravo (FOB)
-        (50000.0, -50000.0)    # Base Charlie (Naval)
+        (base_alpha_x, base_alpha_y),
+        (base_bravo_x, base_bravo_y),
+        (base_charlie_x, base_charlie_y)
     ]
+    
+    # Export base positions to JSON config
+    import json
+    bases_config = {
+        "bases": [
+            {"name": "Alpha (HQ)", "x": float(base_alpha_x), "y": float(base_alpha_y), "z": 0.0},
+            {"name": "Bravo (FOB)", "x": float(base_bravo_x), "y": float(base_bravo_y), "z": 0.0},
+            {"name": "Charlie (Naval)", "x": float(base_charlie_x), "y": float(base_charlie_y), "z": 0.0}
+        ]
+    }
+    config_path = os.path.join(os.path.dirname(os.path.abspath(__file__)), '..', 'bases_config.json')
+    with open(config_path, 'w') as f:
+        json.dump(bases_config, f, indent=2)
     
     # Pre-allocate output arrays
     x = np.zeros(num_records)
@@ -181,6 +203,42 @@ def generate_radar_data(num_records=1000000, output_file='radar_data.csv'):
             'base_target': 2, # Charlie
             'altitude_range': (9000, 10000),
             'speed_range': (120, 140)
+        },
+        {
+            'name': 'Aigaion Fleet',
+            'type_id': 20, # Enemy Aigaion
+            'size': 1,
+            'formation': 'trail',
+            'base_target': 0, # Alpha
+            'altitude_range': (9000, 11000),
+            'speed_range': (120, 140)
+        },
+        {
+            'name': 'Federation 205 Flight',
+            'type_id': 21, # Enemy 205-class
+            'size': 1,
+            'formation': 'trail',
+            'base_target': 1, # Bravo
+            'altitude_range': (8000, 10000),
+            'speed_range': (110, 130)
+        },
+        {
+            'name': 'Gyges Escort',
+            'type_id': 22, # Gyges
+            'size': 2,
+            'formation': 'echelon_right',
+            'base_target': 0, # Alpha
+            'altitude_range': (8500, 10500),
+            'speed_range': (130, 150)
+        },
+        {
+            'name': 'Kottos Escort',
+            'type_id': 23, # Kottos
+            'size': 1,
+            'formation': 'trail',
+            'base_target': 0, # Alpha
+            'altitude_range': (9500, 11500),
+            'speed_range': (115, 135)
         }
     ]
     
@@ -211,6 +269,33 @@ def generate_radar_data(num_records=1000000, output_file='radar_data.csv'):
             'base_target': 1, # Bravo
             'altitude_range': (8000, 10000),
             'speed_range': (750, 850)
+        },
+        {
+            'name': 'Anura Patrol',
+            'type_id': 24, # Anura-class
+            'size': 2,
+            'formation': 'echelon_left',
+            'base_target': 1, # Bravo
+            'altitude_range': (7000, 9000),
+            'speed_range': (140, 160)
+        },
+        {
+            'name': 'Allied Aigaion',
+            'type_id': 25, # Allied Aigaion
+            'size': 1,
+            'formation': 'trail',
+            'base_target': 0, # Alpha
+            'altitude_range': (9000, 10000),
+            'speed_range': (120, 130)
+        },
+        {
+            'name': 'SOLG Station',
+            'type_id': 26, # SOLG (Allied)
+            'size': 1,
+            'formation': 'trail',
+            'base_target': 0, # Alpha
+            'altitude_range': (15000, 18000),
+            'speed_range': (100, 120)
         }
     ]
     
@@ -325,13 +410,13 @@ def generate_radar_data(num_records=1000000, output_file='radar_data.csv'):
     enemies_mask = (remaining_iff == 0)
     
     # Standard and Advanced plane type IDs:
-    # Allies: F-15 (2), F-14 (3), ADF-01 (14), X-02S (15), P-1112 Airship (18)
-    # Enemies: MiG-29 (0), Su-27 (1), ADF-11F (16), PW-Mk.I (17), GLEIPNIR Airship (19)
-    allies_types = [2, 3, 14, 15, 18]
-    allies_p = [0.44, 0.44, 0.05, 0.05, 0.02]
+    # Allies: F-15 (2), F-14 (3), ADF-01 (14), X-02S (15), P-1112 Airship (18), Anura-class (24), Allied Aigaion (25), SOLG (26)
+    # Enemies: MiG-29 (0), Su-27 (1), ADF-11F (16), PW-Mk.I (17), GLEIPNIR Airship (19), Aigaion (20), 205-class (21), GYGES (22), KOTTOS (23)
+    allies_types = [2, 3, 14, 15, 18, 24, 25, 26]
+    allies_p = [0.42, 0.42, 0.05, 0.05, 0.02, 0.02, 0.01, 0.01]
     
-    enemies_types = [0, 1, 16, 17, 19]
-    enemies_p = [0.44, 0.44, 0.05, 0.05, 0.02]
+    enemies_types = [0, 1, 16, 17, 19, 20, 21, 22, 23]
+    enemies_p = [0.42, 0.42, 0.05, 0.05, 0.02, 0.01, 0.01, 0.01, 0.01]
     
     rem_type_ids = np.zeros(remaining, dtype=int)
     rem_type_ids[allies_mask] = np.random.choice(allies_types, size=np.sum(allies_mask), p=allies_p)
@@ -350,6 +435,13 @@ def generate_radar_data(num_records=1000000, output_file='radar_data.csv'):
     rem_velocities[rem_type_ids == 17] = np.random.uniform(750.0, 900.0, np.sum(rem_type_ids == 17)) # PW-Mk.I
     rem_velocities[rem_type_ids == 18] = np.random.uniform(120.0, 150.0, np.sum(rem_type_ids == 18)) # P-1112 Aigaion
     rem_velocities[rem_type_ids == 19] = np.random.uniform(120.0, 140.0, np.sum(rem_type_ids == 19)) # GLEIPNIR
+    rem_velocities[rem_type_ids == 20] = np.random.uniform(120.0, 145.0, np.sum(rem_type_ids == 20)) # Aigaion (Enemy)
+    rem_velocities[rem_type_ids == 21] = np.random.uniform(110.0, 135.0, np.sum(rem_type_ids == 21)) # 205-class
+    rem_velocities[rem_type_ids == 22] = np.random.uniform(130.0, 155.0, np.sum(rem_type_ids == 22)) # GYGES
+    rem_velocities[rem_type_ids == 23] = np.random.uniform(115.0, 140.0, np.sum(rem_type_ids == 23)) # KOTTOS
+    rem_velocities[rem_type_ids == 24] = np.random.uniform(140.0, 165.0, np.sum(rem_type_ids == 24)) # Anura-class
+    rem_velocities[rem_type_ids == 25] = np.random.uniform(120.0, 140.0, np.sum(rem_type_ids == 25)) # Aigaion (Allied)
+    rem_velocities[rem_type_ids == 26] = np.random.uniform(100.0, 120.0, np.sum(rem_type_ids == 26)) # SOLG
     velocity[current_idx:] = rem_velocities
     
     # Proximity calculation to assign heading vectors for standard hostiles
@@ -415,7 +507,9 @@ def generate_radar_data(num_records=1000000, output_file='radar_data.csv'):
         4: 'F-22A', 5: 'F-14D', 6: 'F-15C', 7: 'F-15E', 8: 'F-16C',
         9: 'Su-47', 10: 'Su-37', 11: 'Su-33', 12: 'Su-30SM', 13: 'Su-35',
         14: 'ADF-01', 15: 'X-02S', 16: 'ADF-11F', 17: 'PW-Mk.I',
-        18: 'P-1112', 19: 'GLEIPNIR'
+        18: 'P-1112', 19: 'GLEIPNIR', 20: 'Aigaion', 21: '205-class',
+        22: 'GYGES', 23: 'KOTTOS', 24: 'Anura-class', 25: 'Aigaion',
+        26: 'SOLG'
     }
     aircraft_type = np.array([type_mapping[tid] for tid in aircraft_type_id])
     
